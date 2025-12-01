@@ -1,0 +1,29 @@
+ResearchSystem/
+│
+├── app.py              # 【主程序】负责网页路由、逻辑交互
+├── models.py           # 【数据库模型】定义 ER 图转换来的表结构
+├── mailer.py           # 【工具类】负责发邮件
+├── init_db.py          # 【脚本】独立的假数据生成脚本（只运行一次）
+│
+├── static/             # 存放静态文件
+│   └── uploads/        # 存放上传的 Excel 模板
+│
+└── templates/          # 存放 HTML 网页模板
+    ├── layout.html     # 布局模板（包含导航栏等公用部分）
+    ├── dashboard.html  # 仪表盘
+    ├── contacts.html   # 基础信息管理页
+    └── 等
+
+
+公邮 18672133895@163.com _test666
+test1c2025@163.com _test666
+test2c2025@163.com _test666
+DBMS_T1@163.com _test666
+DBMS_T2@163.com _test666
+DBMS_T3@163.com _test666
+rdbms_test1@163.com 密码test666CSJ
+rdbms_test2@163.com 密码test666CSJ
+rdbms_test3@163.com 密码test666CSJ
+2244209653@qq.com
+
+授权码YXtFC34MKwXkQB4Y

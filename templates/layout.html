@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>科研数据智能汇总系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        body { background-color: #f8f9fa; }
+        /* 侧边栏样式 */
+        .sidebar { min-height: 100vh; background-color: #2c3e50; color: white; }
+        .sidebar a { color: #adb5bd; text-decoration: none; padding: 12px 20px; display: block; transition: 0.3s; }
+        .sidebar a:hover, .sidebar a.active { background-color: #34495e; color: white; border-left: 4px solid #3498db; }
+        /* 通用卡片样式 */
+        .card-counter { box-shadow: 2px 2px 10px #DADADA; margin: 5px; padding: 20px 10px; background-color: #fff; height: 100px; border-radius: 5px; transition: .3s linear all; }
+        .card-counter:hover { box-shadow: 4px 4px 20px #DADADA; transform: translateY(-2px); }
+        .card-counter.primary { background-color: #007bff; color: #FFF; }
+        .card-counter.danger { background-color: #ef5350; color: #FFF; }
+    </style>
+    {% block styles %}{% endblock %}
+</head>
+<body>
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-2 sidebar p-0">
+            <div class="p-3 text-center border-bottom border-secondary">
+                <h4 class="fs-5"><i class="bi bi-mortarboard-fill"></i> 数据汇总助手</h4>
+            </div>
+            <nav class="mt-3">
+                <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint == 'dashboard' else '' }}">
+                    <i class="bi bi-speedometer2"></i> 系统仪表盘
+                </a>
+                <a href="{{ url_for('contacts') }}" class="{{ 'active' if request.endpoint == 'contacts' else '' }}">
+                    <i class="bi bi-person-lines-fill"></i> 基础信息管理
+                </a>
+                <a href="{{ url_for('task_center') }}" class="{{ 'active' if request.endpoint == 'task_center' else '' }}">
+                    <i class="bi bi-list-task"></i> 任务中心
+                </a>
+                <a href="#" class="">
+                    <i class="bi bi-bell"></i> 提醒中心
+                </a>
+                <a href="{{ url_for('recycled_files') }}" class="{{ 'active' if request.endpoint == 'recycled_files' else '' }}">
+                    <i class="bi bi-file-earmark-spreadsheet"></i> 汇总中心
+                </a>
+            </nav>
+        </div>
+
+        <div class="col-md-10 p-4">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

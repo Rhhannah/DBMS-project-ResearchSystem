@@ -1,0 +1,273 @@
+{% extends "layout.html" %}
+
+{% block styles %}
+<style>
+    /* 步骤条样式 */
+    .step-wizard { display: flex; justify-content: space-between; margin-bottom: 20px; }
+    .step-wizard .step { width: 24%; text-align: center; padding: 10px; background: #e9ecef; border-radius: 4px; cursor: default; }
+    .step-wizard .step.active { background: #007bff; color: white; font-weight: bold; }
+    /* 步骤内容切换 */
+    .task-step { display: none; }
+    .task-step.active { display: block; }
+    /* 文件上传区样式 */
+    .file-upload-area { border: 2px dashed #dee2e6; border-radius: 5px; padding: 30px; text-align: center; background: #fdfdfd; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h3 class="mb-4">任务中心</h3>
+
+<ul class="nav nav-tabs mb-3" id="taskTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link {{ 'active' if draft_task or (not draft_task and not show_drafts_tab) else '' }}"
+                id="create-tab" data-bs-toggle="tab" data-bs-target="#create-pane" type="button">
+            {{ '正在编辑草稿' if draft_task else '创建新任务' }}
+        </button>
+    </li>
+
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="drafts-tab" data-bs-toggle="tab" data-bs-target="#drafts-pane" type="button">
+            草稿箱 <span class="badge bg-secondary rounded-pill">{{ drafts|length }}</span>
+        </button>
+    </li>
+
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="history-tab" data-bs-toggle="tab" data-bs-target="#history-pane" type="button">
+            历史任务
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content">
+
+    <div class="tab-pane fade {{ 'show active' if draft_task or (not draft_task and not show_drafts_tab) else '' }}" id="create-pane">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+
+                <div class="step-wizard">
+                    <div class="step active" id="sw-1">1. 任务设置</div>
+                    <div class="step" id="sw-2">2. 选择收件人</div>
+                    <div class="step" id="sw-3">3. 设置时间</div>
+                    <div class="step" id="sw-4">4. 邮件与附件</div>
+                </div>
+
+                <form action="{{ url_for('create_task') }}" method="POST" enctype="multipart/form-data" id="taskForm">
+
+                    {% if draft_task %}
+                    <input type="hidden" name="existing_task_id" value="{{ draft_task.task_id }}">
+                    {% endif %}
+
+                    <div id="step-1" class="task-step active">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">任务名称</label>
+                            <input type="text" name="task_name" class="form-control form-control-lg"
+                                   value="{{ draft_task.task_name if draft_task else '' }}"
+                                   placeholder="例如：2025年度科研成果统计" required>
+                        </div>
+                        <div class="text-end mt-4">
+                            <button type="button" class="btn btn-primary px-4" onclick="nextStep(2)">下一步</button>
+                        </div>
+                    </div>
+
+                    <div id="step-2" class="task-step">
+                        <label class="form-label fw-bold mb-3">发送范围</label>
+                        <div class="btn-group w-100 mb-3" role="group">
+                            <input type="radio" class="btn-check" name="recipient_type" value="all" id="scope-all" checked onchange="toggleScope()">
+                            <label class="btn btn-outline-primary" for="scope-all">全体教师</label>
+
+                            <input type="radio" class="btn-check" name="recipient_type" value="department" id="scope-dept" onchange="toggleScope()">
+                            <label class="btn btn-outline-primary" for="scope-dept">按院系</label>
+
+                            <input type="radio" class="btn-check" name="recipient_type" value="manual" id="scope-manual" onchange="toggleScope()">
+                            <label class="btn btn-outline-primary" for="scope-manual">手动选择</label>
+                        </div>
+
+                        <div id="dept-select-box" style="display:none;" class="mb-3 p-3 bg-light rounded border">
+                            <select name="department" class="form-select">
+                                {% for dep in departments %}
+                                <option value="{{ dep.dep_id }}">{{ dep.dep_name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div id="manual-select-box" style="display:none;" class="mb-3">
+                            <input type="text" class="form-control mb-2" placeholder="输入姓名筛选..." onkeyup="filterTeachers(this.value)">
+                            <div class="border rounded p-2 bg-white" style="max-height: 250px; overflow-y: auto;">
+                                {% for t in teachers %}
+                                <div class="form-check teacher-item">
+                                    <input class="form-check-input" type="checkbox" name="recipients" value="{{ t.teacher_id }}">
+                                    <label class="form-check-label">{{ t.name }} <span class="text-muted small">({{ t.department.dep_name }})</span></label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between mt-4">
+                            <button type="button" class="btn btn-secondary" onclick="nextStep(1)">上一步</button>
+                            <button type="button" class="btn btn-primary px-4" onclick="nextStep(3)">下一步</button>
+                        </div>
+                    </div>
+
+                    <div id="step-3" class="task-step">
+                        <div class="mb-3">
+                            <label class="form-label">截止日期</label>
+                            <input type="date" name="end_time" class="form-control"
+                                   value="{{ draft_task.end_time.strftime('%Y-%m-%d') if draft_task and draft_task.end_time else '' }}" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">提醒日期</label>
+                            <input type="date" name="reminder_time" class="form-control"
+                                   value="{{ draft_task.reminder_time.strftime('%Y-%m-%d') if draft_task and draft_task.reminder_time else '' }}">
+                        </div>
+                        <div class="d-flex justify-content-between mt-4">
+                            <button type="button" class="btn btn-secondary" onclick="nextStep(2)">上一步</button>
+                            <button type="button" class="btn btn-primary px-4" onclick="nextStep(4)">下一步</button>
+                        </div>
+                    </div>
+
+                    <div id="step-4" class="task-step">
+                        <div class="mb-3">
+                            <label class="form-label">邮件主题</label>
+                            <input type="text" name="email_subject" class="form-control" placeholder="留空则使用默认格式"
+                                   value="{{ email_template.subject if email_template else '' }}">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">邮件正文说明</label>
+                            <textarea name="email_content" class="form-control" rows="4">{{ email_template.content if email_template else '' }}</textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">上传模板</label>
+                            <div class="file-upload-area">
+                                {% if draft_task and draft_task.format_file %}
+                                    <p class="text-success"><i class="bi bi-check-circle"></i> 当前已存模板: {{ draft_task.format_file }}</p>
+                                    <small class="text-muted">重新上传将覆盖原文件</small>
+                                {% endif %}
+                                <input type="file" name="format_file" class="form-control mt-2">
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-4">
+                            <button type="button" class="btn btn-secondary" onclick="nextStep(3)">上一步</button>
+                            <div>
+                                <input type="hidden" name="save_as_draft" id="saveAsDraftInput" value="0">
+                                <button type="button" class="btn btn-outline-secondary me-2" onclick="submitForm(true)">
+                                    <i class="bi bi-save"></i> {{ '更新草稿' if draft_task else '存为草稿' }}
+                                </button>
+                                <button type="button" class="btn btn-primary px-4" onclick="submitForm(false)">
+                                    <i class="bi bi-send-fill"></i> 立即发送
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-pane fade" id="drafts-pane">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>任务名称</th>
+                            <th>上次保存时间</th>
+                            <th style="width: 200px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for draft in drafts %}
+                        <tr>
+                            <td class="fw-bold">{{ draft.task_name }}</td>
+                            <td>{{ draft.start_time.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td>
+                                <a href="{{ url_for('continue_draft', task_id=draft.task_id) }}" class="btn btn-sm btn-primary">
+                                    <i class="bi bi-pencil-square"></i> 继续编辑
+                                </a>
+                                <form action="{{ url_for('delete_task', task_id=draft.task_id) }}" method="POST" class="d-inline" onsubmit="return confirm('确定删除此草稿吗？')">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="3" class="text-center py-5 text-muted">暂无草稿</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-pane fade" id="history-pane">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>任务名称</th>
+                            <th>创建时间</th>
+                            <th>截止日期</th>
+                            <th>状态</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for task in tasks %}
+                        <tr>
+                            <td>{{ task.task_name }}</td>
+                            <td>{{ task.start_time.strftime('%Y-%m-%d') }}</td>
+                            <td>{{ task.end_time.strftime('%Y-%m-%d') if task.end_time else '-' }}</td>
+                            <td>
+                                {% if task.status == 'active' %}<span class="badge bg-success">进行中</span>
+                                {% else %}<span class="badge bg-secondary">已结束</span>{% endif %}
+                            </td>
+                            <td>
+                                <a href="{{ url_for('task_detail', task_id=task.task_id) }}" class="btn btn-sm btn-info text-white">详情</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // 步骤切换逻辑 (保持不变)
+    function nextStep(step) {
+        document.querySelectorAll('.task-step').forEach(el => el.classList.remove('active'));
+        document.getElementById('step-' + step).classList.add('active');
+        for(let i=1; i<=4; i++) {
+            const el = document.getElementById('sw-' + i);
+            if(i <= step) el.classList.add('active');
+            else el.classList.remove('active');
+        }
+    }
+
+    // 切换收件人范围显示 (保持不变)
+    function toggleScope() {
+        const type = document.querySelector('input[name="recipient_type"]:checked').value;
+        document.getElementById('dept-select-box').style.display = (type === 'department') ? 'block' : 'none';
+        document.getElementById('manual-select-box').style.display = (type === 'manual') ? 'block' : 'none';
+    }
+
+    // 教师搜索过滤 (保持不变)
+    function filterTeachers(text) {
+        text = text.toLowerCase();
+        document.querySelectorAll('.teacher-item').forEach(item => {
+            const label = item.innerText.toLowerCase();
+            item.style.display = label.includes(text) ? 'block' : 'none';
+        });
+    }
+
+    // 提交表单 (保持不变)
+    function submitForm(isDraft) {
+        document.getElementById('saveAsDraftInput').value = isDraft ? '1' : '0';
+        if(!isDraft && !confirm("确定要立即发送邮件给选中的老师吗？")) return;
+        document.getElementById('taskForm').submit();
+    }
+</script>
+{% endblock %}
