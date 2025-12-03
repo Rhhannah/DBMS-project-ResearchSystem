@@ -50,6 +50,7 @@ class Task(db.Model):
     email_subject = db.Column(db.String(200))  # 保存自定义标题
     email_content = db.Column(db.Text)  # 保存自定义正文
 
+
     def __repr__(self):
         return f'<Task {self.task_name}>'
 
@@ -61,13 +62,21 @@ class TaskRecipient(db.Model):
 
     task_id = db.Column(db.Integer, db.ForeignKey('tasks.task_id'))
     teacher_id = db.Column(db.String(20), db.ForeignKey('teachers.teacher_id'))
-
-    is_replied = db.Column(db.Boolean, default=False)
     sent_time = db.Column(db.DateTime)
 
     # 关系定义
     teacher = db.relationship('Teacher', backref='task_recipients')
     task = db.relationship('Task', backref='recipients')
+
+    @property
+    def is_replied(self):
+        """检查该收件人是否已提交了回收文件"""
+        from models import RecycledExcel  # 需要导入 RecycledExcel 模型
+        # 检查 RecycledExcel 表中是否存在 task_id 和 teacher_id 匹配的记录
+        return RecycledExcel.query.filter_by(
+            task_id=self.task_id,
+            teacher_id=self.teacher_id
+        ).first() is not None
 
     def __repr__(self):
         return f'<TaskRecipient {self.teacher_id} -> {self.task_id}>'

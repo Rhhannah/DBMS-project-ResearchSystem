@@ -1,3 +1,5 @@
+from sqlite3 import IntegrityError
+from datetime import date
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, session
 from models import db, Department, Teacher, Task, TaskRecipient, RecycledExcel
 from mailer import MailClient  # 导入邮件客户端
@@ -5,6 +7,7 @@ from datetime import datetime, timedelta
 import os
 import pandas as pd
 from werkzeug.utils import secure_filename
+from sqlalchemy import func
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///research_system.db'
@@ -30,7 +33,18 @@ def dashboard():
     total_teachers = Teacher.query.count()
     total_departments = Department.query.count()
     total_tasks = Task.query.count()
-    active_tasks = Task.query.filter(Task.status.in_(['active', 'ongoing'])).count()
+
+    # 统计进行中的任务数
+    today = date.today()
+    today_str = today.strftime('%Y-%m-%d')
+    active_tasks = Task.query.filter(
+        # 1. 状态必须是 'active'
+        Task.status == 'active',
+        # 截止日期不能是 NULL
+        func.date(Task.end_time) > today_str,
+        Task.end_time.isnot(None)  # 排除 NULL 值
+    ).count()
+    print(active_tasks)
 
     # 最近任务
     recent_tasks = Task.query.order_by(Task.start_time.desc()).limit(5).all()
@@ -38,15 +52,16 @@ def dashboard():
     # 任务状态统计
     task_stats = {
         'draft': Task.query.filter_by(status='draft').count(),
-        'active': Task.query.filter_by(status='active').count(),
-        'completed': Task.query.filter_by(status='completed').count()
+        # 仪表盘上的“进行中”任务只包含 status='active' 的任务
+        'active': active_tasks,
+        # ⚠️ 注意：这里不再统计 terminated 和 completed，如果需要显示，需要重新定义统计逻辑
     }
+
 
     return render_template('dashboard.html',
                            total_teachers=total_teachers,
                            total_departments=total_departments,
                            total_tasks=total_tasks,
-                           active_tasks=active_tasks,
                            recent_tasks=recent_tasks,
                            task_stats=task_stats)
 
@@ -261,24 +276,64 @@ def download_import_template():
 
 
 # 编辑教师
-@app.route('/edit_teacher/<teacher_id>', methods=['POST'])
-def edit_teacher(teacher_id):
-    try:
-        teacher = Teacher.query.get_or_404(teacher_id)
-        teacher.name = request.form['name']
-        teacher.sex = request.form['sex']
-        teacher.age = int(request.form['age'])
-        teacher.title = request.form['title']
-        teacher.position = request.form['position']
-        teacher.email = request.form['email']
-        teacher.tel = request.form['tel']
-        teacher.dep_id = request.form['dep_id']
+@app.route('/edit_teacher', methods=['POST'])
+def edit_teacher():
+    """
+    处理教师信息编辑表单提交，允许修改职工号 (teacher_id)。
+    """
+    # 1. 从表单中获取原始 ID（用于查找记录）和新 ID（用户输入）
+    original_id = request.form.get('original_teacher_id')
+    new_id = request.form.get('teacher_id')
 
+    # 2. 查找教师对象，使用原始 ID
+    teacher = Teacher.query.get(original_id)
+
+    if not teacher:
+        flash(f'错误：未找到原始职工号为 {original_id} 的教师信息。', 'danger')
+        return redirect(url_for('contacts'))
+
+    try:
+        # 3. 检查 ID 是否需要更改
+        if original_id != new_id:
+            # 检查新的职工号是否已被占用
+            existing_teacher = Teacher.query.get(new_id)
+            if existing_teacher:
+                # 注意：这里我们使用 flash 警告，不进行数据库操作
+                flash(f'错误：新的职工号 **{new_id}** 已经被其他教师占用，请更换。', 'warning')
+                return redirect(url_for('contacts'))
+
+            # 如果不重复，更新职工号
+            # **注意：更新主键会自动级联更新所有关联表的外键，如果你的数据库配置了级联操作。**
+            teacher.teacher_id = new_id
+
+            # 4. 更新其他字段
+        teacher.name = request.form.get('name')
+        teacher.sex = request.form.get('sex')
+
+        age_str = request.form.get('age')
+        teacher.age = int(age_str) if age_str and age_str.isdigit() else None
+
+        dep_id_str = request.form.get('dep_id')
+        teacher.dep_id = dep_id_str if dep_id_str else None
+
+        teacher.title = request.form.get('title')
+        teacher.position = request.form.get('position')
+        teacher.email = request.form.get('email')
+        teacher.tel = request.form.get('tel')
+
+        # 5. 提交数据库
         db.session.commit()
-        flash('教师信息更新成功！', 'success')
+        flash(f'教师 **{teacher.name}** 的信息已更新成功！', 'success')
+
+    except IntegrityError:
+        # 捕获数据库完整性错误（例如：非空字段为空）
+        db.session.rollback()
+        flash('更新失败：数据完整性检查未通过。请确保所有必填字段已填写。', 'danger')
+
     except Exception as e:
         db.session.rollback()
-        flash(f'更新失败: {str(e)}', 'error')
+        flash(f'更新失败，发生未知错误。错误详情: {str(e)}', 'danger')
+        print(f"Update error: {e}")
 
     return redirect(url_for('contacts'))
 
@@ -308,49 +363,96 @@ def delete_teacher(teacher_id):
 # 批量删除教师
 @app.route('/batch_delete_teachers', methods=['POST'])
 def batch_delete_teachers():
+    # 1. 获取选中的教师 ID 列表
+    # request.form.getlist() 用于获取同名多选框（teacher_ids）的所有值
+    teacher_ids_to_delete = request.form.getlist('teacher_ids')
+
+    if not teacher_ids_to_delete:
+        flash('请选择至少一位教师进行删除。', 'warning')
+        return redirect(url_for('contacts'))
+
+    deleted_count = 0
     try:
-        teacher_ids = request.form.getlist('teacher_ids')
-        if not teacher_ids:
-            flash('请选择要删除的教师', 'error')
-            return redirect(url_for('contacts'))
+        # 2. 批量删除操作
+        for teacher_id in teacher_ids_to_delete:
 
-        # 验证教师ID是否存在
-        existing_teachers = Teacher.query.filter(Teacher.teacher_id.in_(teacher_ids)).all()
-        existing_ids = [t.teacher_id for t in existing_teachers]
+            # A. 处理外键依赖 (如果数据库没有配置 ON DELETE CASCADE)
+            # 假设您有一个 Task 模型，其外键指向 Teacher
+            # 如果你有其他依赖模型，也需要在这里进行类似操作
+            TaskRecipient.query.filter(TaskRecipient.teacher_id == teacher_id).delete(synchronize_session='fetch')
 
-        # 先删除关联数据（使用 synchronize_session=False 避免会话同步问题）
-        TaskRecipient.query.filter(TaskRecipient.teacher_id.in_(existing_ids)).delete(synchronize_session=False)
-        RecycledExcel.query.filter(RecycledExcel.teacher_id.in_(existing_ids)).delete(synchronize_session=False)
+            # B. 删除教师记录
+            teacher_to_delete = Teacher.query.get(teacher_id)
+            if teacher_to_delete:
+                db.session.delete(teacher_to_delete)
+                deleted_count += 1
 
-        # 批量删除教师
-        delete_count = Teacher.query.filter(Teacher.teacher_id.in_(existing_ids)).delete(synchronize_session=False)
         db.session.commit()
+        flash(f'成功删除 {deleted_count} 位教师及其相关记录。', 'success')
 
-        flash(f'成功删除 {delete_count} 名教师', 'success')
     except Exception as e:
         db.session.rollback()
-        flash(f'批量删除失败: {str(e)}', 'error')
+        flash(f'批量删除失败：{str(e)}', 'danger')
+        print(f"Batch Delete Error: {e}")
 
     return redirect(url_for('contacts'))
 
 
-# app.py 中修改 task_center 函数
+
 @app.route('/task_center')
 def task_center():
     # 1. 获取草稿 (Drafts)
     drafts = Task.query.filter_by(status='draft').order_by(Task.start_time.desc()).all()
 
     # 2. 获取已发送/历史任务 (History) - 排除草稿
+    # 注意：这里我们获取的是原始的 SQLAlchemy 对象列表
     history_tasks = Task.query.filter(Task.status != 'draft').order_by(Task.start_time.desc()).all()
+    # 3. ⭐️ 遍历历史任务，计算并附加双重状态 ⭐️
+    for task in history_tasks:
 
+        # --- A. 计算时间状态 (进行中/已终止) ---
+        if task.end_time and task.end_time.date() < date.today():
+            task.time_status = '已终止'
+        else:
+            task.time_status = '进行中'
+
+        # --- B. 计算回复状态 (已完成/未完成/未开始) ---
+
+        # 计算总收件人数
+        total_recipients = TaskRecipient.query.filter_by(task_id=task.task_id).count()
+
+        # 计算已回复人数（利用 TaskRecipient 模型中的 is_replied property）
+        # ⚠️ 注意：由于 is_replied 是一个计算属性，直接在 query.filter() 中使用它通常效率低下或不可行。
+        # 更好的方法是使用 TaskRecipient 的关系和 RecycledExcel 表进行JOIN或子查询。
+        #
+        # 为了简洁和可读性，我们采用手动计数或利用已有的 RecycledExcel 关联。
+
+        if total_recipients == 0:
+            task.reply_status = '未完成'
+            task.reply_count = 0
+
+        else:
+            # 统计已回复数量：计算有多少 RecycledExcel 记录关联到这个任务下的收件人
+            replied_count = RecycledExcel.query.filter_by(task_id=task.task_id).distinct(
+                RecycledExcel.teacher_id).count()
+            task.reply_count = replied_count
+
+            if replied_count >= total_recipients:
+                task.reply_status = '已完成'
+            else:
+                task.reply_status = '未完成'
+
+    # 4. 准备其他数据
     teachers = Teacher.query.all()
     departments = Department.query.all()
+    today_str = date.today().isoformat()
 
     return render_template('task_center.html',
                            drafts=drafts,  # 传草稿
                            tasks=history_tasks,  # 传历史任务
                            teachers=teachers,
-                           departments=departments)
+                           departments=departments,
+                           today=today_str)
 
 
 # 新增：继续编辑草稿的路由
@@ -367,6 +469,8 @@ def continue_draft(task_id):
         'subject': task.email_subject,
         'content': task.email_content
     }
+
+
     # 4. 渲染 task_center.html，并告诉它 "draft_task" 是谁
     return render_template('task_center.html',
                            draft_task=task,  # 核心：传入当前草稿
@@ -392,55 +496,21 @@ def send_task_emails(task_id):
             teacher = recipient.teacher
             attachment_path = os.path.join(app.config['UPLOAD_FOLDER'], task.format_file) if task.format_file else None
 
-            # 获取自定义邮件主题和正文（如果存在）
-            session_key = f'task_email_{task_id}'
-            email_template = session.get(session_key, {})
+            # 直接使用 task 对象中已保存的数据
+            subject = task.email_subject
+            content_text = task.email_content
 
-            # 使用自定义主题或默认主题
-            if email_template.get('subject'):
-                subject = email_template['subject']
-            else:
-                subject = f"科研任务通知: {task.task_name}"
+            # 转换为HTML格式
+            content = f"""
+            <html>
+            <body>
+                <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+                    {content_text.replace(chr(10), '<br>')}
+                </div>
+            </body>
+            </html>
+            """
 
-            # 使用自定义正文或默认正文
-            if email_template.get('content'):
-                # 替换模板变量
-                content_text = email_template['content']
-                content_text = content_text.replace('{teacher_name}', teacher.name)
-                content_text = content_text.replace('{task_name}', task.task_name)
-                if task.end_time:
-                    content_text = content_text.replace('{end_time}', task.end_time.strftime('%Y-%m-%d'))
-                else:
-                    content_text = content_text.replace('{end_time}', '未设置')
-
-                # 转换为HTML格式
-                content = f"""
-                <html>
-                <body>
-                    <div style="font-family: Arial, sans-serif; line-height: 1.6;">
-                        {content_text.replace(chr(10), '<br>')}
-                    </div>
-                </body>
-                </html>
-                """
-            else:
-                # 默认邮件内容
-                content = f"""
-                <html>
-                <body>
-                    <h3>尊敬的{teacher.name}老师：</h3>
-                    <p>您有一个新的科研任务需要处理：</p>
-                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px;">
-                        <p><strong>任务名称：</strong>{task.task_name}</p>
-                        <p><strong>开始时间：</strong>{task.start_time.strftime('%Y-%m-%d %H:%M')}</p>
-                        <p><strong>截止时间：</strong>{task.end_time.strftime('%Y-%m-%d %H:%M') if task.end_time else '未设置'}</p>
-                        <p><strong>提醒时间：</strong>{task.reminder_time.strftime('%Y-%m-%d %H:%M') if task.reminder_time else '未设置'}</p>
-                    </div>
-                    <p>请及时登录系统查看并完成任务。</p>
-                    <p><em>科研管理系统</em></p>
-                </body>
-                </html>
-                """
 
             # 发送邮件
             success, message = mail_client.send_task_email(
@@ -501,6 +571,7 @@ def create_task():
         # 2. 更新通用字段 (无论是新建还是更新，都执行这些赋值)
         task.task_name = request.form['task_name']
 
+
         # 处理时间
         if request.form.get('end_time'):
             task.end_time = datetime.strptime(request.form['end_time'], '%Y-%m-%d')
@@ -560,7 +631,6 @@ def create_task():
         # 6. 如果不是草稿，立即发送邮件
         if not save_as_draft:
             send_task_emails(task.task_id)  # 调用你已有的发送函数
-            flash(f'任务已发布！邮件已发送给 {len(teacher_ids)} 人', 'success')
         else:
             flash(f'草稿保存成功！已记录 {len(teacher_ids)} 名收件人', 'info')
 
@@ -579,7 +649,35 @@ def create_task():
 def task_detail(task_id):
     task = Task.query.get_or_404(task_id)
     recipients = TaskRecipient.query.filter_by(task_id=task_id).all()
-    return render_template('task_detail.html', task=task, recipients=recipients)
+
+    # --- 1. 计算回收率状态 (Recycling Status) ---
+    total_recipients = len(recipients)
+    replied_count = len([r for r in recipients if r.is_replied])
+
+    if total_recipients == 0:
+        reply_status = '未完成'  # 还没有收件人
+        reply_rate = 0
+    else:
+        reply_rate = round((replied_count / total_recipients) * 100, 2)
+        reply_status = '已完成' if reply_rate == 100 else '未完成'
+
+    # --- 2. 计算时间状态 (Time Status) ---
+    if task.status == 'draft':
+        time_status = '草稿'
+    elif task.end_time and task.end_time.date() < date.today():
+        time_status = '已终止'  # 截止日期已过
+    else:
+        time_status = '进行中'  # 截止日期未到
+
+    return render_template('task_detail.html',
+                           task=task,
+                           recipients=recipients,
+                           time_status=time_status,  # 新增：按时间算的状态
+                           reply_status=reply_status,  # 新增：按回收率算的状态
+                           reply_rate=reply_rate,  # 回收率数据
+                           replied_count=replied_count,
+                           total_recipients=total_recipients
+                           )
 
 
 # 文件回收管理
@@ -609,7 +707,7 @@ def update_task_status(task_id):
         task = Task.query.get_or_404(task_id)
         new_status = request.form.get('status')
         
-        if new_status not in ['draft', 'active', 'completed', 'cancelled']:
+        if new_status not in ['draft', 'active']:
             flash('无效的任务状态', 'error')
             return redirect(url_for('task_center'))
         

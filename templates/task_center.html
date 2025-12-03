@@ -33,7 +33,7 @@
 
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="history-tab" data-bs-toggle="tab" data-bs-target="#history-pane" type="button">
-            历史任务
+            历史任务 <span class="badge bg-secondary rounded-pill">{{ tasks|length }}</span>
         </button>
     </li>
 </ul>
@@ -111,13 +111,15 @@
                         <div class="mb-3">
                             <label class="form-label">截止日期</label>
                             <input type="date" name="end_time" class="form-control"
-                                   value="{{ draft_task.end_time.strftime('%Y-%m-%d') if draft_task and draft_task.end_time else '' }}" required>
-                        </div>
+                                   value="{{ draft_task.end_time.strftime('%Y-%m-%d') if draft_task and draft_task.end_time else '' }}"
+                                   required
+                                   min="{{ today }}"> </div>
                         <div class="mb-3">
                             <label class="form-label">提醒日期</label>
                             <input type="date" name="reminder_time" class="form-control"
-                                   value="{{ draft_task.reminder_time.strftime('%Y-%m-%d') if draft_task and draft_task.reminder_time else '' }}">
-                        </div>
+                                   value="{{ draft_task.reminder_time.strftime('%Y-%m-%d') if draft_task and draft_task.reminder_time else '' }}"
+                                   required
+                                   min="{{ today }}"> </div>
                         <div class="d-flex justify-content-between mt-4">
                             <button type="button" class="btn btn-secondary" onclick="nextStep(2)">上一步</button>
                             <button type="button" class="btn btn-primary px-4" onclick="nextStep(4)">下一步</button>
@@ -127,12 +129,12 @@
                     <div id="step-4" class="task-step">
                         <div class="mb-3">
                             <label class="form-label">邮件主题</label>
-                            <input type="text" name="email_subject" class="form-control" placeholder="留空则使用默认格式"
-                                   value="{{ email_template.subject if email_template else '' }}">
+                            <input type="text" name="email_subject" class="form-control"
+                                   value="{{ email_template.subject if email_template else '' }}" required>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">邮件正文说明</label>
-                            <textarea name="email_content" class="form-control" rows="4">{{ email_template.content if email_template else '' }}</textarea>
+                            <label class="form-label">邮件正文</label>
+                            <textarea name="email_content" class="form-control" rows="4" required>{{ email_template.content if email_template else '' }}</textarea>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">上传模板</label>
@@ -206,7 +208,8 @@
                             <th>任务名称</th>
                             <th>创建时间</th>
                             <th>截止日期</th>
-                            <th>状态</th>
+                            <th style="width: 120px;">时间状态</th>
+                            <th style="width: 120px;">回复状态</th>
                             <th>操作</th>
                         </tr>
                     </thead>
@@ -217,9 +220,21 @@
                             <td>{{ task.start_time.strftime('%Y-%m-%d') }}</td>
                             <td>{{ task.end_time.strftime('%Y-%m-%d') if task.end_time else '-' }}</td>
                             <td>
-                                {% if task.status == 'active' %}<span class="badge bg-success">进行中</span>
-                                {% else %}<span class="badge bg-secondary">已结束</span>{% endif %}
+                                {% if task.time_status == '已终止' %}
+                                    <span class="badge bg-danger">已终止</span>
+                                {% else %}
+                                    <span class="badge bg-success">进行中</span>
+                                {% endif %}
                             </td>
+
+                            <td>
+                                {% if task.reply_status == '已完成' %}
+                                    <span class="badge bg-primary">已完成</span>
+                                {% else %}
+                                    <span class="badge bg-warning text-dark">未完成</span>
+                                {% endif %}
+                            </td>
+
                             <td>
                                 <a href="{{ url_for('task_detail', task_id=task.task_id) }}" class="btn btn-sm btn-info text-white">详情</a>
                             </td>
@@ -236,13 +251,77 @@
 
 {% block scripts %}
 <script>
+    // 辅助函数：获取 YYYY-MM-DD 格式的今天日期
+    function getTodayDateString() {
+        const today = new Date();
+        const year = today.getFullYear();
+        // getMonth() 是 0-11，所以要加 1
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
     // 步骤切换逻辑 (保持不变)
-    function nextStep(step) {
+    function nextStep(targetStep) {
+        // 1. 获取当前活动步骤的容器 ID (例如: 'step-1')
+        const currentActiveStep = document.querySelector('.task-step.active');
+        const currentStepId = parseInt(currentActiveStep.id.split('-')[1]);
+
+        // 2. 查找当前步骤内的所有必填输入框
+        const requiredInputs = currentActiveStep.querySelectorAll('[required]');
+        let isValid = true;
+
+        // 3. 逐个检查必填项的有效性
+        requiredInputs.forEach(input => {
+            if (!input.checkValidity()) {
+                isValid = false;
+                // 触发 HTML5 默认的错误提示（气泡）
+                input.reportValidity();
+            }
+        });
+
+        // 4. 如果验证失败，则停止跳转
+        if (!isValid) {
+            return;
+        }
+
+        // 针对第 3 步的特殊日期逻辑检查 ---
+        if (currentStepId === 3) {
+            const endDateInput = document.querySelector('#step-3 input[name="end_time"]');
+            const reminderDateInput = document.querySelector('#step-3 input[name="reminder_time"]');
+
+            const today = getTodayDateString();
+
+            // 检查截止日期是否小于今天
+            if (endDateInput && endDateInput.value < today) {
+                alert('错误：截止日期不能早于当前日期，请修改！');
+                endDateInput.focus();
+                return;
+            }
+
+            // 检查提醒日期是否小于今天
+            if (reminderDateInput && reminderDateInput.value < today) {
+                alert('错误：提醒日期不能早于当前日期，请修改！');
+                reminderDateInput.focus();
+                return;
+            }
+
+            // 检查提醒日期是否晚于截止日期 (可选的业务逻辑)
+            if (endDateInput && reminderDateInput && reminderDateInput.value > endDateInput.value) {
+                alert('错误：提醒日期不能晚于截止日期，请修改！');
+                reminderDateInput.focus();
+                return;
+            }
+        }
+
+        // 5. 验证成功，执行步骤跳转逻辑
         document.querySelectorAll('.task-step').forEach(el => el.classList.remove('active'));
-        document.getElementById('step-' + step).classList.add('active');
+        document.getElementById('step-' + targetStep).classList.add('active');
+
+        // 6. 更新步骤条样式
         for(let i=1; i<=4; i++) {
             const el = document.getElementById('sw-' + i);
-            if(i <= step) el.classList.add('active');
+            if(i <= targetStep) el.classList.add('active');
             else el.classList.remove('active');
         }
     }
@@ -253,6 +332,8 @@
         document.getElementById('dept-select-box').style.display = (type === 'department') ? 'block' : 'none';
         document.getElementById('manual-select-box').style.display = (type === 'manual') ? 'block' : 'none';
     }
+
+
 
     // 教师搜索过滤 (保持不变)
     function filterTeachers(text) {
@@ -265,6 +346,21 @@
 
     // 提交表单 (保持不变)
     function submitForm(isDraft) {
+        // 确保在提交前，最后一步的必填项也检查了
+        const step4 = document.getElementById('step-4');
+        const requiredInputs4 = step4.querySelectorAll('[required]');
+        let isValid4 = true;
+        requiredInputs4.forEach(input => {
+            if (!input.checkValidity()) {
+                isValid4 = false;
+                input.reportValidity();
+            }
+        });
+
+        if (!isValid4) {
+            return;
+        }
+
         document.getElementById('saveAsDraftInput').value = isDraft ? '1' : '0';
         if(!isDraft && !confirm("确定要立即发送邮件给选中的老师吗？")) return;
         document.getElementById('taskForm').submit();

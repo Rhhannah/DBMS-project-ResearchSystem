@@ -1,24 +1,25 @@
 {% extends "layout.html" %}
 
 {% block content %}
-<h3 class="mb-4 border-bottom pb-2">系统仪表盘</h3>
+<h3 class="mb-4 border-bottom pb-2">系统仪表盘 <i class="bi bi-speedometer2"></i></h3>
 
 <div class="row mb-4">
     <div class="col-md-6">
-        <div class="card-counter primary cursor-pointer">
-            <i class="bi bi-list-check fs-1 float-start"></i>
+        <div class="card-counter success">
+            <i class="bi bi-check-circle fs-1 float-start"></i>
             <div class="float-end text-end">
-                <span class="fs-2">{{ active_tasks }}</span>
+                <span class="fs-2">{{ task_stats.active }}</span>
                 <p>进行中的任务</p>
             </div>
         </div>
     </div>
+
     <div class="col-md-6">
-        <div class="card-counter danger">
-            <i class="bi bi-exclamation-circle fs-1 float-start"></i>
+        <div class="card-counter warning">
+            <i class="bi bi-pencil-square fs-1 float-start"></i>
             <div class="float-end text-end">
-                <span class="fs-2">{{ task_stats.active }}</span>
-                <p>待处理提醒</p>
+                <span class="fs-2">{{ task_stats.draft }}</span>
+                <p>草稿箱任务</p>
             </div>
         </div>
     </div>
@@ -26,42 +27,57 @@
 
 <div class="card mb-4 shadow-sm">
     <div class="card-body">
-        <h5 class="card-title mb-3">快捷操作</h5>
+        <h5 class="card-title mb-3">⚡ 快捷操作</h5>
         <a href="{{ url_for('task_center') }}" class="btn btn-primary btn-lg me-2">
             <i class="bi bi-plus-circle"></i> 发起新的数据收集任务
         </a>
         <a href="{{ url_for('contacts') }}" class="btn btn-outline-secondary">
             <i class="bi bi-person-lines-fill"></i> 管理通讯录
         </a>
+         <a href="{{ url_for('recycled_files') }}" class="btn btn-outline-info">
+            <i class="bi bi-file-earmark-arrow-down"></i> 查看已回收文件
+        </a>
     </div>
 </div>
 
 <div class="card shadow-sm">
     <div class="card-header bg-white">
-        <h5 class="mb-0">最近任务动态</h5>
+        <h5 class="mb-0">⏱️ 最近任务动态</h5>
     </div>
     <div class="card-body p-0">
         <table class="table table-hover mb-0">
             <thead class="table-light">
-                <tr><th>任务名称</th><th>状态</th><th>截止时间</th></tr>
+                <tr><th>任务名称</th><th>状态</th><th>截止时间</th><th>操作</th></tr>
             </thead>
             <tbody>
                 {% for task in recent_tasks %}
                 <tr>
                     <td>{{ task.task_name }}</td>
                     <td>
-                        {% if task.status == 'active' %}
-                            <span class="badge bg-success">进行中</span>
-                        {% elif task.status == 'draft' %}
+                        {% if task.status == 'draft' %}
                             <span class="badge bg-warning text-dark">草稿</span>
                         {% else %}
-                            <span class="badge bg-secondary">已结束</span>
+                            {% if task.time_status == '已终止' %}
+                                <span class="badge bg-danger me-1">已终止</span>
+                            {% else  %}
+                                <span class="badge bg-success me-1">进行中</span>
+                            {% endif %}
+
+
+                            {% if task.reply_status == '已完成' %}
+                                <span class="badge bg-primary">已完成</span>
+                            {% else %}
+                                <span class="badge bg-warning text-dark">未完成</span>
+                            {% endif %}
                         {% endif %}
                     </td>
                     <td>{{ task.end_time.strftime('%Y-%m-%d') if task.end_time else '未设置' }}</td>
+                    <td>
+                        <a href="{{ url_for('task_detail', task_id=task.task_id) }}" class="btn btn-sm btn-outline-info">查看详情</a>
+                    </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="3" class="text-center text-muted">暂无任务</td></tr>
+                <tr><td colspan="4" class="text-center text-muted py-3">暂无任务动态</td></tr>
                 {% endfor %}
             </tbody>
         </table>
